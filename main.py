@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from math import cos, sin, pi
 from config import *
 
-def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros,num_puntos_intermedios_linea,num_puntos_intermedios_circulo,num_puntos_intermedios_spline):
+def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros,num_puntos_intermedios_linea,num_puntos_intermedios_circulo,num_puntos_intermedios_spline, indice_punto_contorno, indice_punto_agujero):
     print(f"Leyendo archivo DXF: {ruta_dxf}")
     doc = ezdxf.readfile(ruta_dxf)
     msp = doc.modelspace()
@@ -239,14 +239,17 @@ def visualizar_malla(malla):
     plt.title("Malla generada con Triangle")
     plt.show()
 
-ruta_dxf = "you_file.dxf" 
+
+ruta_dxf = input("Nombre del archivo con extensión dxf: ")
 
 puntos_contorno, segmentos_contorno, conj_puntos_agujeros, conj_segmentos_agujeros, clasificaciones_contorno, clasificaciones_agujeros = leer_entidades_dxf_por_capa(
-    ruta_dxf, prefijo_capa_agujeros, num_intermedios_linea, num_intermedios_circulo, num_intermedios_spline
+    ruta_dxf, prefijo_capa_agujeros, num_intermedios_linea, num_intermedios_circulo, 
+    num_intermedios_spline, indice_punto_contorno, indice_punto_agujero
 )
 
 malla = generar_malla_triangle(
-    puntos_contorno, segmentos_contorno, conj_puntos_agujeros, conj_segmentos_agujeros, max_area, clasificaciones_contorno, clasificaciones_agujeros
+    puntos_contorno, segmentos_contorno, conj_puntos_agujeros, 
+    conj_segmentos_agujeros, max_area, clasificaciones_contorno, clasificaciones_agujeros
 )
 
 if op_vtk:
