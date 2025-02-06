@@ -1,10 +1,12 @@
 import ezdxf
+import csv
 import numpy as np
 import triangle
 import matplotlib.pyplot as plt
 from math import cos, sin, pi
+from config import *
 
-def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros):
+def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros,num_puntos_intermedios_linea,num_puntos_intermedios_circulo,num_puntos_intermedios_spline):
     print(f"Leyendo archivo DXF: {ruta_dxf}")
     doc = ezdxf.readfile(ruta_dxf)
     msp = doc.modelspace()
@@ -15,13 +17,8 @@ def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros):
     conj_segmentos_agujeros = []
     clasificaciones_contorno = []
     clasificaciones_agujeros = []
-    capas_agujeros = set()
 
-    presicion = 6
-    num_puntos_intermedios_linea = 10
-    num_puntos_intermedios_circulo = 10
-    num_puntos_intermedios_spline = 0.1
-    indice_punto_contorno = 0
+    capas_agujeros = set()
 
     print(f"Buscando capas con prefijo: {prefijo_capa_agujeros}")
     for entity in msp:
@@ -61,7 +58,6 @@ def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros):
         puntos_agujero = []
         segmentos_agujero = []
         clasificaciones_agujero = []
-        indice_punto_agujero = 0
 
         for entity in msp:
             if entity.dxftype() in ['SPLINE', 'LINE', 'CIRCLE'] and entity.dxf.layer == capa_agujero:
@@ -90,7 +86,7 @@ def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros):
             conj_puntos_agujeros.append(np.array(puntos_agujero)[:, :2])
             conj_segmentos_agujeros.append(segmentos_agujero)
             clasificaciones_agujeros.append(clasificaciones_agujero)
-
+    
     print(f"Lectura del DXF completada.")
     return (
         np.array(puntos_contorno)[:, :2], segmentos_contorno, conj_puntos_agujeros, conj_segmentos_agujeros,
@@ -138,83 +134,126 @@ def generar_malla_triangle(puntos_contorno, segmentos_contorno, conj_puntos_aguj
     print(f"Malla generada exitosamente.")
     return malla
 
-def guardar_malla_vtk(nombre_archivo, malla, op):
-    if op:
-        print(f"Guardando malla en formato VTK: {nombre_archivo}.vtk")
-        try:
-            with open(nombre_archivo, "w") as archivo:
-                archivo.write("# vtk DataFile Version 3.0\n")
-                archivo.write("Malla generada con Triangle\n")
-                archivo.write("ASCII\n")
-                archivo.write("DATASET UNSTRUCTURED_GRID\n")
+def guardar_malla_vtk(nombre_archivo, malla):
+    nombre_archivo = nombre_archivo[:-4] 
+    print(f"Guardando malla en formato VTK: {nombre_archivo}.vtk")
+    try:
+        with open(nombre_archivo, "w") as archivo:
+            archivo.write("# vtk DataFile Version 3.0\n")
+            archivo.write("Malla generada con Triangle\n")
+            archivo.write("ASCII\n")
+            archivo.write("DATASET UNSTRUCTURED_GRID\n")
+    
+            archivo.write(f"POINTS {len(malla['vertices'])} float\n")
+            for punto in malla["vertices"]:
+                archivo.write(f"{punto[0]} {punto[1]} 0.0\n")
+        
+            num_triangulos = len(malla["triangles"])
+            archivo.write(f"CELLS {num_triangulos} {4 * num_triangulos}\n")
+            for triangulo in malla["triangles"]:
+                archivo.write(f"3 {triangulo[0]} {triangulo[1]} {triangulo[2]}\n")
+        
+            archivo.write(f"CELL_TYPES {num_triangulos}\n")
+            archivo.write(" ".join(["5"] * num_triangulos))
+            archivo.write("\n")
+            print("Malla generada y guardada en " + nombre_archivo + ".vtk")
+    except KeyError as e:
+        print(f"Error: Falta una clave en el diccionario 'malla'. Detalle: {e}")
+    except IOError as e:
+        print(f"Error de entrada/salida al guardar el archivo. Detalle: {e}")
+    except TypeError as e:
+        print(f"Error: Los datos en 'malla' no tienen el formato esperado. Detalle: {e}")
+    except Exception as e:
+        print(f"No se pudo guardar la malla en formato vtk. Error inesperado: {e}")
 
-                archivo.write(f"POINTS {len(malla['vertices'])} float\n")
-                for punto in malla["vertices"]:
-                    archivo.write(f"{punto[0]} {punto[1]} 0.0\n")
-
-                num_triangulos = len(malla["triangles"])
-                archivo.write(f"CELLS {num_triangulos} {4 * num_triangulos}\n")
-                for triangulo in malla["triangles"]:
-                    archivo.write(f"3 {triangulo[0]} {triangulo[1]} {triangulo[2]}\n")
-
-                archivo.write(f"CELL_TYPES {num_triangulos}\n")
-                archivo.write(" ".join(["5"] * num_triangulos))
-                archivo.write("\n")
-                print("Malla generada y guardada en " + nombre_archivo + ".vtk")
-        except KeyError as e:
-            print(f"Error: Falta una clave en el diccionario 'malla'. Detalle: {e}")
-        except IOError as e:
-            print(f"Error de entrada/salida al guardar el archivo. Detalle: {e}")
-        except TypeError as e:
-            print(f"Error: Los datos en 'malla' no tienen el formato esperado. Detalle: {e}")
-        except Exception as e:
-            print(f"No se pudo guardar la malla en formato vtk. Error inesperado: {e}")
-
-def guardar_malla_npz(nombre_archivo, malla, op):
-    if op:
-        print(f"Guardando malla en formato NPZ: {nombre_archivo}.npz")
-        try:
-            np.savez(
-                nombre_archivo,
-                vertices=malla["vertices"],
-                triangles=malla["triangles"],
-                clasificaciones=malla["clasificaciones"]
-            )
-            print("Malla generada y guardada en " + nombre_archivo + ".npz")
-        except KeyError as e:
-            print(f"Error: Falta una clave en el diccionario 'malla'. Detalle: {e}")
-        except Exception as e:
-            print(f"No se pudo guardar la malla en formato npz. Error: {e}")
-
-def visualizar_malla(malla, op):
-    if op:
-        print("Visualizando malla...")
-        vertices_xy = np.array([vertice[:2] for vertice in malla["vertices"]])
-        plt.triplot(
-            vertices_xy[:, 0],
-            vertices_xy[:, 1],
-            malla["triangles"]
+def guardar_malla_npz(nombre_archivo, malla):
+    nombre_archivo = nombre_archivo[:-4] 
+    print(f"Guardando malla en formato NPZ: {nombre_archivo}.npz")
+    try:
+        np.savez(
+            nombre_archivo,
+            vertices=malla["vertices"],
+            triangles=malla["triangles"],
+            clasificaciones=malla["clasificaciones"]
         )
-        plt.gca().set_aspect("equal")
-        plt.title("Malla generada con Triangle")
-        plt.show()
+        print("Malla generada y guardada en " + nombre_archivo + ".npz")
+    except KeyError as e:
+        print(f"Error: Falta una clave en el diccionario 'malla'. Detalle: {e}")
+    except Exception as e:
+        print(f"No se pudo guardar la malla en formato npz. Error: {e}")
 
-ruta_dxf = "t.dxf"
-name = ruta_dxf[:-4]
-prefijo_capa_agujeros = "int"
-max_area = 0.1
-op_vtk = True
-op_npz = True
-op_vis = True
+import csv
+
+def guardar_malla_csv(nombre_archivo, malla):
+    nombre_archivo_t = nombre_archivo[:-4] + "_elementos.csv"  
+    nombre_archivo_p = nombre_archivo[:-4] + "_puntos.csv" 
+    nombre_archivo_c = nombre_archivo[:-4] + "_clas.csv"  
+    print(f"Guardando malla en formato CSV: {nombre_archivo}")
+    
+    try:
+        with open(nombre_archivo_p, "w", newline='') as archivo:
+            writer = csv.writer(archivo)
+
+            for punto in malla["vertices"]:
+                writer.writerow([float(punto[0]), float(punto[1])])
+        archivo.close()
+        print(f"Malla guardada en {nombre_archivo_p}")
+        
+        with open(nombre_archivo_t, "w", newline='') as archivo:
+            writer = csv.writer(archivo)
+            
+            for triangulo in malla["triangles"]:
+                writer.writerow([int(triangulo[0]), int(triangulo[1]), int(triangulo[2])])
+        archivo.close()
+        print(f"Malla guardada en {nombre_archivo_t}")
+    
+        with open(nombre_archivo_c, "w", newline='') as archivo:
+            writer = csv.writer(archivo)
+            
+            for clas in malla["clasificaciones"]:
+                if clas==None:
+                    writer.writerow(["None"])
+                else:
+                    writer.writerow([clas])
+        archivo.close()
+        print(f"Malla guardada en {nombre_archivo_c}")
+
+    except KeyError as e:
+        print(f"Error: Falta una clave en el diccionario 'malla'. Detalle: {e}")
+    except IOError as e:
+        print(f"Error de entrada/salida al guardar el archivo. Detalle: {e}")
+    except TypeError as e:
+        print(f"Error: Los datos en 'malla' no tienen el formato esperado. Detalle: {e}")
+    except Exception as e:
+        print(f"No se pudo guardar la malla en formato CSV. Error inesperado: {e}")
+
+def visualizar_malla(malla):
+    print("Visualizando malla...")
+    vertices_xy = np.array([vertice[:2] for vertice in malla["vertices"]])
+    plt.triplot(
+        vertices_xy[:, 0],
+        vertices_xy[:, 1],
+        malla["triangles"]
+    )
+    plt.gca().set_aspect("equal")
+    plt.title("Malla generada con Triangle")
+    plt.show()
+
+ruta_dxf = "you_file.dxf" 
 
 puntos_contorno, segmentos_contorno, conj_puntos_agujeros, conj_segmentos_agujeros, clasificaciones_contorno, clasificaciones_agujeros = leer_entidades_dxf_por_capa(
-    ruta_dxf, prefijo_capa_agujeros
+    ruta_dxf, prefijo_capa_agujeros, num_intermedios_linea, num_intermedios_circulo, num_intermedios_spline
 )
 
 malla = generar_malla_triangle(
     puntos_contorno, segmentos_contorno, conj_puntos_agujeros, conj_segmentos_agujeros, max_area, clasificaciones_contorno, clasificaciones_agujeros
 )
 
-guardar_malla_vtk(name, malla, op_vtk)
-guardar_malla_npz(name, malla, op_npz)
-visualizar_malla(malla, op_vis)
+if op_vtk:
+    guardar_malla_vtk(ruta_dxf, malla)
+if op_npz:
+    guardar_malla_npz(ruta_dxf, malla)
+if op_csv:
+    guardar_malla_csv(ruta_dxf, malla)
+if op_vis:
+    visualizar_malla(malla)
