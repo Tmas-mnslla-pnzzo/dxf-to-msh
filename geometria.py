@@ -5,8 +5,27 @@ import triangle
 import matplotlib.pyplot as plt
 from math import cos, sin, pi
 from config import *
+import sys
 
-def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros,num_puntos_intermedios_linea,num_puntos_intermedios_circulo,num_puntos_intermedios_spline, indice_punto_contorno, indice_punto_agujero):
+
+def eliminar_puntos_duplicados(puntos, segmentos, clasificaciones):
+    puntos_unicos, indices_unicos = np.unique(puntos, axis=0, return_inverse=True)
+    
+    # Filtrar segmentos para evitar índices fuera de rango
+    segmentos_actualizados = [
+        [indices_unicos[s[0]], indices_unicos[s[1]]]
+        for s in segmentos if s[0] < len(indices_unicos) and s[1] < len(indices_unicos)
+    ]
+
+    clasificaciones_actualizadas = [0] * len(puntos_unicos)
+    for i, idx in enumerate(indices_unicos):
+        if idx < len(clasificaciones_actualizadas):  # Evitar fuera de rango
+            clasificaciones_actualizadas[idx] = clasificaciones[i]
+
+    return puntos_unicos, segmentos_actualizados, clasificaciones_actualizadas
+
+
+def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros, num_puntos_intermedios_linea, num_puntos_intermedios_circulo, num_puntos_intermedios_spline, indice_punto_contorno, indice_punto_agujero, densidad_puntos):
     print(f"Leyendo archivo DXF: {ruta_dxf}")
     doc = ezdxf.readfile(ruta_dxf)
     msp = doc.modelspace()
@@ -34,7 +53,9 @@ def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros,num_puntos_inter
                 elif entity.dxftype() == 'LINE':
                     start = np.array([round(entity.dxf.start.x, presicion), round(entity.dxf.start.y, presicion)])
                     end = np.array([round(entity.dxf.end.x, presicion), round(entity.dxf.end.y, presicion)])
-                    puntos_entity = np.array([start + (end - start) * t / num_puntos_intermedios_linea for t in range(num_puntos_intermedios_linea + 1)])
+                    longitud = np.linalg.norm(end - start)
+                    num_puntos_adaptativo = max(int(longitud * densidad_puntos), num_puntos_intermedios_linea)  # Ajusta el divisor 0.5 según necesites     
+                    puntos_entity = np.array([start + (end - start) * t / num_puntos_adaptativo for t in range(num_puntos_adaptativo + 1)])
                 elif entity.dxftype() == 'CIRCLE':
                     centro = np.array([entity.dxf.center.x, entity.dxf.center.y])
                     radio = entity.dxf.radius
@@ -48,9 +69,9 @@ def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros,num_puntos_inter
                 puntos_contorno.extend(puntos_entity)
                 segmentos_contorno.extend(segmentos_entity)
                 if entity.dxf.layer == "0":
-                    clasificaciones_contorno.extend(["ext0"] * num_puntos)
+                    clasificaciones_contorno.extend([1] * num_puntos)
                 else:
-                    clasificaciones_contorno.extend([entity.dxf.layer] * num_puntos)
+                    clasificaciones_contorno.extend([int(entity.dxf.layer[3:])+1] * num_puntos)
                 indice_punto_contorno += num_puntos
 
     print(f"Procesando agujeros...")
@@ -66,7 +87,9 @@ def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros,num_puntos_inter
                 elif entity.dxftype() == 'LINE':
                     start = np.array([round(entity.dxf.start.x, presicion), round(entity.dxf.start.y, presicion)])
                     end = np.array([round(entity.dxf.end.x, presicion), round(entity.dxf.end.y, presicion)])
-                    puntos_entity = np.array([start + (end - start) * t / num_puntos_intermedios_linea for t in range(num_puntos_intermedios_linea + 1)])
+                    longitud = np.linalg.norm(end - start)
+                    num_puntos_adaptativo = max(int(longitud * densidad_puntos), num_puntos_intermedios_linea)  # Ajusta el divisor 0.5 según necesites     
+                    puntos_entity = np.array([start + (end - start) * t / num_puntos_adaptativo for t in range(num_puntos_adaptativo + 1)])
                 elif entity.dxftype() == 'CIRCLE':
                     centro = np.array([entity.dxf.center.x, entity.dxf.center.y])
                     radio = entity.dxf.radius
@@ -75,11 +98,14 @@ def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros,num_puntos_inter
                     puntos_entity = np.vstack([puntos_entity, puntos_entity[0]])
 
                 num_puntos = len(puntos_entity)
-                segmentos_entity = [[indice_punto_agujero + i, indice_punto_agujero + j] for i, j in zip(range(num_puntos - 1), range(1, num_puntos))]
-
+                segmentos_entity = [[i, i + 1] for i in range(num_puntos - 1)]  # Segmentos internos                
+                clasific_entity=[-int(entity.dxf.layer[3:])-1] * num_puntos
+               
+                puntos_entity, segmentos_entity, clasific_entity = eliminar_puntos_duplicados(puntos_entity, segmentos_entity, clasific_entity)
+             
                 puntos_agujero.extend(puntos_entity)
                 segmentos_agujero.extend(segmentos_entity)
-                clasificaciones_agujero.extend([capa_agujero] * num_puntos)
+                clasificaciones_agujero.extend([-int(entity.dxf.layer[3:])-1] * num_puntos)
                 indice_punto_agujero += num_puntos
 
         if puntos_agujero:
@@ -87,25 +113,32 @@ def leer_entidades_dxf_por_capa(ruta_dxf, prefijo_capa_agujeros,num_puntos_inter
             conj_segmentos_agujeros.append(segmentos_agujero)
             clasificaciones_agujeros.append(clasificaciones_agujero)
     
+    puntos_contorno, segmentos_contorno, clasificaciones_contorno = eliminar_puntos_duplicados(np.array(puntos_contorno), segmentos_contorno, clasificaciones_contorno)
+    
     print(f"Lectura del DXF completada.")
     return (
         np.array(puntos_contorno)[:, :2], segmentos_contorno, conj_puntos_agujeros, conj_segmentos_agujeros,
         clasificaciones_contorno, clasificaciones_agujeros
     )
 
-def generar_malla_triangle(puntos_contorno, segmentos_contorno, conj_puntos_agujeros, conj_segmentos_agujeros, max_area, clasificaciones_contorno, clasificaciones_agujeros):
+def generar_malla_triangle(puntos_contorno, segmentos_contorno, conj_puntos_agujeros, 
+                            conj_segmentos_agujeros, max_area, clasificaciones_contorno, clasificaciones_agujeros):
     print(f"Generando malla con Triangle...")
     puntos_combinados = np.copy(puntos_contorno)
     segmentos_combinados = list(segmentos_contorno)
     agujeros = []
     clasificaciones = list(clasificaciones_contorno)
 
+    esquinas = {tuple(p) for p in puntos_contorno}
     indice_offset = len(puntos_contorno)
+    
     for puntos_agujero, segmentos_agujero, clasificaciones_agujero in zip(conj_puntos_agujeros, conj_segmentos_agujeros, clasificaciones_agujeros):
         puntos_combinados = np.vstack([puntos_combinados, puntos_agujero])
         segmentos_combinados.extend([[indice_offset + i, indice_offset + j] for i, j in segmentos_agujero])
+        
         centro_agujero = np.mean(puntos_agujero, axis=0)
         agujeros.append(centro_agujero)
+        
         clasificaciones.extend(clasificaciones_agujero)
         indice_offset += len(puntos_agujero)
 
@@ -116,8 +149,14 @@ def generar_malla_triangle(puntos_contorno, segmentos_contorno, conj_puntos_aguj
 
     if agujeros:
         datos["holes"] = agujeros
-
+        
     malla = triangle.triangulate(datos, f"pqa{max_area}")
+
+    vertices_generados = {tuple(p) for p in malla["vertices"]}
+    esquinas_perdidas = esquinas - vertices_generados
+    if esquinas_perdidas:
+        print(f"Advertencia: {len(esquinas_perdidas)} nodos de esquina no se incluyeron en la malla.")
+        print(esquinas_perdidas)
 
     clasificaciones_finales = []
     for punto in malla["vertices"]:
@@ -128,14 +167,14 @@ def generar_malla_triangle(puntos_contorno, segmentos_contorno, conj_puntos_aguj
                 coincidencia = True
                 break
         if not coincidencia:
-            clasificaciones_finales.append(None)
+            clasificaciones_finales.append(0)
 
     malla["clasificaciones"] = clasificaciones_finales
     print(f"Malla generada exitosamente.")
+    
     return malla
 
 def guardar_malla_vtk(nombre_archivo, malla):
-    nombre_archivo = nombre_archivo[:-4] 
     print(f"Guardando malla en formato VTK: {nombre_archivo}.vtk")
     try:
         with open(nombre_archivo, "w") as archivo:
@@ -166,8 +205,7 @@ def guardar_malla_vtk(nombre_archivo, malla):
     except Exception as e:
         print(f"No se pudo guardar la malla en formato vtk. Error inesperado: {e}")
 
-def guardar_malla_npz(nombre_archivo, malla):
-    nombre_archivo = nombre_archivo[:-4] 
+def guardar_malla_npz(nombre_archivo, malla): 
     print(f"Guardando malla en formato NPZ: {nombre_archivo}.npz")
     try:
         np.savez(
@@ -185,9 +223,9 @@ def guardar_malla_npz(nombre_archivo, malla):
 import csv
 
 def guardar_malla_csv(nombre_archivo, malla):
-    nombre_archivo_t = nombre_archivo[:-4] + "_elementos.csv"  
-    nombre_archivo_p = nombre_archivo[:-4] + "_puntos.csv" 
-    nombre_archivo_c = nombre_archivo[:-4] + "_clas.csv"  
+    nombre_archivo_t = nombre_archivo + "_elementos.csv"  
+    nombre_archivo_p = nombre_archivo + "_puntos.csv" 
+    nombre_archivo_c = nombre_archivo + "_clas.csv"  
     print(f"Guardando malla en formato CSV: {nombre_archivo}")
     
     try:
